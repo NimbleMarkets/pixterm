@@ -129,6 +129,88 @@ func TestSetMaxProcsNegative_DoesNotHang(t *testing.T) {
 	renderWithTimeout(t, a, 2*time.Second)
 }
 
+// TestNewFromImage_SubImage_NoDithering exercises createANSImage with an
+// image whose Bounds().Min is non-zero (i.e., the result of img.SubImage).
+// The pre-fix loops used bounds.Min.{X,Y} as loop start indices but treated
+// those values as pixmap indices, leaving the first bounds.Min rows/cols of
+// the pixmap zero-initialized and producing the wrong overall size.
+func TestNewFromImage_SubImage_NoDithering(t *testing.T) {
+	parent := image.NewRGBA(image.Rect(0, 0, 80, 80))
+	fill := color.RGBA{R: 200, G: 100, B: 50, A: 255}
+	for y := 0; y < 80; y++ {
+		for x := 0; x < 80; x++ {
+			parent.SetRGBA(x, y, fill)
+		}
+	}
+	sub := parent.SubImage(image.Rect(20, 10, 60, 50))
+	if sub.Bounds().Min == (image.Point{}) {
+		t.Fatalf("test setup: expected non-zero Bounds().Min, got %v", sub.Bounds())
+	}
+
+	a, err := NewFromImage(sub, color.Transparent, NoDithering)
+	if err != nil {
+		t.Fatalf("NewFromImage: %v", err)
+	}
+
+	// Sub-image is 40x40 in size; NoDithering keeps dimensions when the
+	// height is already even, so the result should be 40x40.
+	if a.h != 40 || a.w != 40 {
+		t.Fatalf("dimensions: got %dx%d, want 40x40", a.h, a.w)
+	}
+
+	for y := 0; y < a.h; y++ {
+		for x := 0; x < a.w; x++ {
+			p, _ := a.GetAt(y, x)
+			if p.R != fill.R || p.G != fill.G || p.B != fill.B {
+				t.Fatalf("pixel at (%d,%d): got RGB(%d,%d,%d), want RGB(%d,%d,%d)",
+					y, x, p.R, p.G, p.B, fill.R, fill.G, fill.B)
+			}
+		}
+	}
+}
+
+// TestNewFromImage_SubImage_Dithering is the dithering counterpart. With the
+// pre-fix code the dithering branch was even worse: yMax was divided by
+// BlockSizeY but yMin was left in pixel space, so for any sub-image with
+// yMin > yMax/BlockSizeY the inner loop never ran at all.
+func TestNewFromImage_SubImage_Dithering(t *testing.T) {
+	parent := image.NewRGBA(image.Rect(0, 0, 80, 80))
+	fill := color.RGBA{R: 200, G: 100, B: 50, A: 255}
+	for y := 0; y < 80; y++ {
+		for x := 0; x < 80; x++ {
+			parent.SetRGBA(x, y, fill)
+		}
+	}
+	sub := parent.SubImage(image.Rect(16, 16, 80, 80))
+
+	a, err := NewFromImage(sub, color.Transparent, DitheringWithBlocks)
+	if err != nil {
+		t.Fatalf("NewFromImage: %v", err)
+	}
+
+	// Sub-image is 64x64; dithering divides height by BlockSizeY and width
+	// by BlockSizeX, so the result should be 8 rows by 16 cols.
+	if a.h != 64/BlockSizeY || a.w != 64/BlockSizeX {
+		t.Fatalf("dimensions: got %dx%d, want %dx%d",
+			a.h, a.w, 64/BlockSizeY, 64/BlockSizeX)
+	}
+
+	// Every block-averaged cell should reflect the uniform input color
+	// (allow ±1 for RGB→HSV→RGB rounding).
+	for y := 0; y < a.h; y++ {
+		for x := 0; x < a.w; x++ {
+			p, _ := a.GetAt(y, x)
+			dR := int(p.R) - int(fill.R)
+			dG := int(p.G) - int(fill.G)
+			dB := int(p.B) - int(fill.B)
+			if dR < -1 || dR > 1 || dG < -1 || dG > 1 || dB < -1 || dB > 1 {
+				t.Fatalf("pixel at (%d,%d): got RGB(%d,%d,%d), want ~RGB(%d,%d,%d)",
+					y, x, p.R, p.G, p.B, fill.R, fill.G, fill.B)
+			}
+		}
+	}
+}
+
 // TestRenderExt_LineCount_Sweep verifies that RenderExt produces the correct
 // number of lines across a matrix of (target ai.h, maxprocs) values. This
 // locks in the loop bounds: outer step, inner condition, and (for

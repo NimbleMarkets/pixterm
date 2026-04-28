@@ -546,26 +546,33 @@ func createANSImage(img image.Image, bg color.Color, dm DitheringMode) (*ANSImag
 		}
 	}
 
+	// Pixel-space bounds of the source. For sub-images returned from
+	// img.SubImage, Min may be non-zero; we read from rgbaOut at absolute
+	// pixel coordinates and write to the pixmap at zero-based indices.
 	yMin, xMin := bounds.Min.Y, bounds.Min.X
 	yMax, xMax := bounds.Max.Y, bounds.Max.X
 
+	// Pixmap dimensions, in pixmap-index space.
+	h := yMax - yMin
+	w := xMax - xMin
+
 	if dm == NoDithering {
 		// always sets an even number of ANSIPixel rows...
-		yMax = yMax - yMax%2 // one for upper pixel and another for lower pixel --> without dithering
+		h = h - h%2 // one for upper pixel and another for lower pixel --> without dithering
 	} else {
-		yMax = yMax / BlockSizeY // always sets 1 ANSIPixel block...
-		xMax = xMax / BlockSizeX // per 8x4 real pixels --> with dithering
+		h = h / BlockSizeY // always sets 1 ANSIPixel block...
+		w = w / BlockSizeX // per 8x4 real pixels --> with dithering
 	}
 
-	ansimage, err := New(yMax, xMax, bg, dm)
+	ansimage, err := New(h, w, bg, dm)
 	if err != nil {
 		return nil, err
 	}
 
 	if dm == NoDithering {
-		for y := yMin; y < yMax; y++ {
-			for x := xMin; x < xMax; x++ {
-				v := rgbaOut.RGBAAt(x, y)
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				v := rgbaOut.RGBAAt(xMin+x, yMin+y)
 				if err := ansimage.SetAt(y, x, v.R, v.G, v.B, 0); err != nil {
 					return nil, err
 				}
@@ -574,15 +581,15 @@ func createANSImage(img image.Image, bg color.Color, dm DitheringMode) (*ANSImag
 	} else {
 		pixelCount := BlockSizeY * BlockSizeX
 
-		for y := yMin; y < yMax; y++ {
-			for x := xMin; x < xMax; x++ {
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
 
 				var sumR, sumG, sumB, sumBri float64
 				for dy := 0; dy < BlockSizeY; dy++ {
-					py := BlockSizeY*y + dy
+					py := yMin + BlockSizeY*y + dy
 
 					for dx := 0; dx < BlockSizeX; dx++ {
-						px := BlockSizeX*x + dx
+						px := xMin + BlockSizeX*x + dx
 
 						pixel := rgbaOut.At(px, py)
 						color, _ := colorful.MakeColor(pixel)
