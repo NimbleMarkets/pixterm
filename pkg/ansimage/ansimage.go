@@ -226,7 +226,12 @@ func (ai *ANSImage) DitheringMode() DitheringMode {
 
 // SetMaxProcs sets the maximum number of parallel goroutines to render the ANSImage
 // (user should manually sets `runtime.GOMAXPROCS(max)` before to this change takes effect).
+// Values less than 1 are clamped to 1; otherwise the render loop's outer
+// step `y += ai.maxprocs` would never advance (or go negative).
 func (ai *ANSImage) SetMaxProcs(max int) {
+	if max < 1 {
+		max = 1
+	}
 	ai.maxprocs = max
 }
 
@@ -287,53 +292,54 @@ func (ai *ANSImage) RenderExt(renderGoCode, disableBgColor bool) string {
 	}
 
 	// WITHOUT DITHERING
+	// Each output row consumes two pixmap rows (upper + lower), so there are
+	// ai.h/2 output rows. The outer loop iterates over output-row batches of
+	// size ai.maxprocs; the inner loop launches one goroutine per output row
+	// in the batch.
 	if ai.dithering == NoDithering {
-		rows := make([]string, ai.h/2)
-		for y := 0; y < ai.h; y += ai.maxprocs {
+		nRows := ai.h / 2
+		rows := make([]string, nRows)
+		for batch := 0; batch < nRows; batch += ai.maxprocs {
 			ch := make(chan renderData, ai.maxprocs)
-			for n, r := 0, y+1; (n <= ai.maxprocs) && (2*r+1 < ai.h); n, r = n+1, y+n+1 {
-				go func(r, y int) {
+			for n, r := 0, batch; (n < ai.maxprocs) && (r < nRows); n, r = n+1, batch+n+1 {
+				go func(r int) {
+					py := 2 * r
 					var str string
 					for x := 0; x < ai.w; x++ {
-						str += ai.pixmap[y][x].RenderExt(renderGoCode, disableBgColor)   // upper pixel
-						str += ai.pixmap[y+1][x].RenderExt(renderGoCode, disableBgColor) // lower pixel
+						str += ai.pixmap[py][x].RenderExt(renderGoCode, disableBgColor)   // upper pixel
+						str += ai.pixmap[py+1][x].RenderExt(renderGoCode, disableBgColor) // lower pixel
 					}
 					str += fmt.Sprintf("%s[0m%s", backslash033, backslashN) // reset ansi style
 					ch <- renderData{row: r, render: str}
-				}(r, 2*r)
-				// DEBUG:
-				// fmt.Printf("y:%d | n:%d | r:%d | 2*r:%d\n", y, n, r, 2*r)
-				// time.Sleep(time.Millisecond * 100)
+				}(r)
 			}
-			for n, r := 0, y+1; (n <= ai.maxprocs) && (2*r+1 < ai.h); n, r = n+1, y+n+1 {
+			for n, r := 0, batch; (n < ai.maxprocs) && (r < nRows); n, r = n+1, batch+n+1 {
 				data := <-ch
 				if renderGoCode {
 					data.render = fmt.Sprintf(`fmt.Print("%s")%s`, data.render, "\n")
 				}
 				rows[data.row] = data.render
-				// DEBUG:
-				// fmt.Printf("data.row:%d\n", data.row)
-				// time.Sleep(time.Millisecond * 100)
 			}
 		}
 		return strings.Join(rows, "")
 	}
 
 	// WITH DITHERING
+	// One output row per pixmap row; outer loop iterates over batches of ai.maxprocs rows.
 	rows := make([]string, ai.h)
-	for y := 0; y < ai.h; y += ai.maxprocs {
+	for batch := 0; batch < ai.h; batch += ai.maxprocs {
 		ch := make(chan renderData, ai.maxprocs)
-		for n, r := 0, y; (n <= ai.maxprocs) && (r+1 < ai.h); n, r = n+1, y+n+1 {
-			go func(y int) {
+		for n, r := 0, batch; (n < ai.maxprocs) && (r < ai.h); n, r = n+1, batch+n+1 {
+			go func(r int) {
 				var str string
 				for x := 0; x < ai.w; x++ {
-					str += ai.pixmap[y][x].RenderExt(renderGoCode, disableBgColor)
+					str += ai.pixmap[r][x].RenderExt(renderGoCode, disableBgColor)
 				}
 				str += fmt.Sprintf("%s[0m%s", backslash033, backslashN) // reset ansi style
-				ch <- renderData{row: y, render: str}
+				ch <- renderData{row: r, render: str}
 			}(r)
 		}
-		for n, r := 0, y; (n <= ai.maxprocs) && (r+1 < ai.h); n, r = n+1, y+n+1 {
+		for n, r := 0, batch; (n < ai.maxprocs) && (r < ai.h); n, r = n+1, batch+n+1 {
 			data := <-ch
 			if renderGoCode {
 				data.render = fmt.Sprintf(`fmt.Print("%s")%s`, data.render, "\n")
