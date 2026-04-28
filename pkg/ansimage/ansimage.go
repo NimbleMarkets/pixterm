@@ -533,16 +533,22 @@ func createANSImage(img image.Image, bg color.Color, dm DitheringMode) (*ANSImag
 
 	// do compositing only if background color has no transparency (thank you @disq for the idea!)
 	// (info - https://stackoverflow.com/questions/36595687/transparent-pixel-color-go-lang-image)
+	//
+	// Source point for the img copies is bounds.Min, not (0,0): draw.Draw
+	// reads `img.At(p - bounds.Min + sp)` for each destination pixel `p`,
+	// so for sub-images (where bounds.Min is non-zero) sp=(0,0) would land
+	// outside img's actual data. The uniform-bg fill keeps sp=(0,0) since
+	// image.NewUniform has infinite bounds.
 	if _, _, _, a := bg.RGBA(); a >= 0xffff {
 		rgbaOut = image.NewRGBA(bounds)
 		draw.Draw(rgbaOut, bounds, image.NewUniform(bg), image.Point{}, draw.Src)
-		draw.Draw(rgbaOut, bounds, img, image.Point{}, draw.Over)
+		draw.Draw(rgbaOut, bounds, img, bounds.Min, draw.Over)
 	} else {
 		if v, ok := img.(*image.RGBA); ok {
 			rgbaOut = v
 		} else {
 			rgbaOut = image.NewRGBA(bounds)
-			draw.Draw(rgbaOut, bounds, img, image.Point{}, draw.Src)
+			draw.Draw(rgbaOut, bounds, img, bounds.Min, draw.Src)
 		}
 	}
 

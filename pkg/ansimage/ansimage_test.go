@@ -211,6 +211,73 @@ func TestNewFromImage_SubImage_Dithering(t *testing.T) {
 	}
 }
 
+// TestNewFromImage_SubImage_OpaqueBg_NoDithering exercises the compositing
+// path of createANSImage (taken when the bg color is opaque) with a
+// sub-image. The pre-fix call `draw.Draw(rgbaOut, bounds, img, image.Point{},
+// draw.Over)` passes (0,0) as the source point, so for each destination
+// pixel `p` it reads `img.At(p - bounds.Min)`. When bounds.Min is non-zero,
+// those reads land outside img's bounds and return transparent — so the
+// uniform-bg fill drawn beforehand is never overwritten and the output is
+// solid bg color instead of the sub-image's pixels.
+func TestNewFromImage_SubImage_OpaqueBg_NoDithering(t *testing.T) {
+	parent := image.NewRGBA(image.Rect(0, 0, 80, 80))
+	fill := color.RGBA{R: 200, G: 100, B: 50, A: 255}
+	for y := 0; y < 80; y++ {
+		for x := 0; x < 80; x++ {
+			parent.SetRGBA(x, y, fill)
+		}
+	}
+	sub := parent.SubImage(image.Rect(20, 10, 60, 50))
+	// color.Black is opaque (alpha 0xffff), so this triggers the composite
+	// branch even though the source is *image.RGBA.
+	a, err := NewFromImage(sub, color.Black, NoDithering)
+	if err != nil {
+		t.Fatalf("NewFromImage: %v", err)
+	}
+	if a.h != 40 || a.w != 40 {
+		t.Fatalf("dimensions: got %dx%d, want 40x40", a.h, a.w)
+	}
+	for y := 0; y < a.h; y++ {
+		for x := 0; x < a.w; x++ {
+			p, _ := a.GetAt(y, x)
+			if p.R != fill.R || p.G != fill.G || p.B != fill.B {
+				t.Fatalf("pixel at (%d,%d): got RGB(%d,%d,%d), want RGB(%d,%d,%d)",
+					y, x, p.R, p.G, p.B, fill.R, fill.G, fill.B)
+			}
+		}
+	}
+}
+
+// TestNewFromImage_SubImage_NonRGBA covers the third draw.Draw call (the
+// `else` branch reached when bg is transparent and the source isn't already
+// *image.RGBA). Same off-by-bounds.Min bug, same fix.
+func TestNewFromImage_SubImage_NonRGBA(t *testing.T) {
+	parent := image.NewNRGBA(image.Rect(0, 0, 80, 80))
+	fill := color.NRGBA{R: 50, G: 200, B: 100, A: 255}
+	for y := 0; y < 80; y++ {
+		for x := 0; x < 80; x++ {
+			parent.SetNRGBA(x, y, fill)
+		}
+	}
+	sub := parent.SubImage(image.Rect(20, 10, 60, 50))
+	a, err := NewFromImage(sub, color.Transparent, NoDithering)
+	if err != nil {
+		t.Fatalf("NewFromImage: %v", err)
+	}
+	if a.h != 40 || a.w != 40 {
+		t.Fatalf("dimensions: got %dx%d, want 40x40", a.h, a.w)
+	}
+	for y := 0; y < a.h; y++ {
+		for x := 0; x < a.w; x++ {
+			p, _ := a.GetAt(y, x)
+			if p.R != fill.R || p.G != fill.G || p.B != fill.B {
+				t.Fatalf("pixel at (%d,%d): got RGB(%d,%d,%d), want RGB(%d,%d,%d)",
+					y, x, p.R, p.G, p.B, fill.R, fill.G, fill.B)
+			}
+		}
+	}
+}
+
 // TestRenderExt_LineCount_Sweep verifies that RenderExt produces the correct
 // number of lines across a matrix of (target ai.h, maxprocs) values. This
 // locks in the loop bounds: outer step, inner condition, and (for
