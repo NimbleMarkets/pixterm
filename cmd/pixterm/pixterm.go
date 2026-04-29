@@ -21,7 +21,7 @@ import (
 	"regexp"
 	"runtime"
 
-	"github.com/eliukblau/pixterm/pkg/ansimage"
+	"github.com/NimbleMarkets/pixterm/pkg/ansimage"
 	"github.com/lucasb-eyer/go-colorful"
 	"golang.org/x/term"
 )

@@ -6,6 +6,8 @@
 
 ```
 
+This `pixterm` fork is maintained by [NimbleMarkets](https://github.com/NimbleMarkets) for use in our projects.  We intend to upstream all the contents.  You are probably looking for [`github.com/eliukblau/pixterm`](https://github.com/eliukblau/pixterm).
+
 # `PIXterm` - *draw images in your ANSI terminal with true color*
 
 **`PIXterm`** ***shows images directly in your terminal***, recreating the pixels through a combination of [ANSI character background color](https://en.wikipedia.org/wiki/ANSI_escape_code#Colors) and the [unicode lower half block element](https://en.wikipedia.org/wiki/Block_Elements). If image has transparency, an optional matte color can be used for background. Also, you can specify a dithering mode; in which case, the image is rendered using block elements with different shades, or using standard ASCII characters in the same way. In dithering mode, the matte color is used to fill the background of the blocks or characters.

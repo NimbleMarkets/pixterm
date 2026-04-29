@@ -1,4 +1,4 @@
-module github.com/eliukblau/pixterm
+module github.com/NimbleMarkets/pixterm
 
 go 1.25.0
 
