@@ -115,7 +115,7 @@ type ANSImage struct {
 	bgG       uint8
 	bgB       uint8
 	dithering DitheringMode
-	pixmap    [][]*ANSIpixel
+	pixmap    []ANSIpixel
 }
 
 // Render returns the ANSI-compatible string form of ANSI-pixel.
@@ -274,14 +274,24 @@ func (ai *ANSImage) GetMaxProcs() int {
 	return ai.maxprocs
 }
 
+func (ai *ANSImage) pixelIndex(y, x int) int {
+	return y*ai.w + x
+}
+
+func (ai *ANSImage) pixelAt(y, x int) *ANSIpixel {
+	return &ai.pixmap[ai.pixelIndex(y, x)]
+}
+
 // SetAt sets ANSI-pixel color (RBG) and brightness in coordinates (y,x).
 func (ai *ANSImage) SetAt(y, x int, r, g, b, brightness uint8) error {
 	if y >= 0 && y < ai.h && x >= 0 && x < ai.w {
-		ai.pixmap[y][x].R = r
-		ai.pixmap[y][x].G = g
-		ai.pixmap[y][x].B = b
-		ai.pixmap[y][x].Brightness = brightness
-		ai.pixmap[y][x].upper = ((ai.dithering == NoDithering) && (y%2 == 0))
+		p := ai.pixelAt(y, x)
+		p.R = r
+		p.G = g
+		p.B = b
+		p.Brightness = brightness
+		p.upper = ((ai.dithering == NoDithering) && (y%2 == 0))
+		p.source = ai
 		return nil
 	}
 	return ErrOutOfBounds
@@ -290,13 +300,14 @@ func (ai *ANSImage) SetAt(y, x int, r, g, b, brightness uint8) error {
 // GetAt gets ANSI-pixel in coordinates (y,x).
 func (ai *ANSImage) GetAt(y, x int) (*ANSIpixel, error) {
 	if y >= 0 && y < ai.h && x >= 0 && x < ai.w {
+		p := ai.pixelAt(y, x)
 		return &ANSIpixel{
-				R:          ai.pixmap[y][x].R,
-				G:          ai.pixmap[y][x].G,
-				B:          ai.pixmap[y][x].B,
-				Brightness: ai.pixmap[y][x].Brightness,
-				upper:      ai.pixmap[y][x].upper,
-				source:     ai.pixmap[y][x].source,
+				R:          p.R,
+				G:          p.G,
+				B:          p.B,
+				Brightness: p.Brightness,
+				upper:      p.upper,
+				source:     p.source,
 			},
 			nil
 	}
@@ -337,11 +348,13 @@ func (ai *ANSImage) RenderExt(renderGoCode, disableBgColor bool) string {
 			for n, r := 0, batch; (n < ai.maxprocs) && (r < nRows); n, r = n+1, batch+n+1 {
 				go func(r int) {
 					py := 2 * r
+					upperRow := py * ai.w
+					lowerRow := (py + 1) * ai.w
 					var builder strings.Builder
 					builder.Grow(ai.w*48 + 16)
 					for x := 0; x < ai.w; x++ {
-						writeANSIPixel(&builder, ai.pixmap[py][x], backslash033, disableBgColor)   // upper pixel
-						writeANSIPixel(&builder, ai.pixmap[py+1][x], backslash033, disableBgColor) // lower pixel
+						writeANSIPixel(&builder, &ai.pixmap[upperRow+x], backslash033, disableBgColor) // upper pixel
+						writeANSIPixel(&builder, &ai.pixmap[lowerRow+x], backslash033, disableBgColor) // lower pixel
 					}
 					writeReset(&builder, backslash033, backslashN) // reset ansi style
 					ch <- renderData{row: r, render: builder.String()}
@@ -365,10 +378,11 @@ func (ai *ANSImage) RenderExt(renderGoCode, disableBgColor bool) string {
 		ch := make(chan renderData, ai.maxprocs)
 		for n, r := 0, batch; (n < ai.maxprocs) && (r < ai.h); n, r = n+1, batch+n+1 {
 			go func(r int) {
+				row := r * ai.w
 				var builder strings.Builder
 				builder.Grow(ai.w*48 + 16)
 				for x := 0; x < ai.w; x++ {
-					writeANSIPixel(&builder, ai.pixmap[r][x], backslash033, disableBgColor)
+					writeANSIPixel(&builder, &ai.pixmap[row+x], backslash033, disableBgColor)
 				}
 				writeReset(&builder, backslash033, backslashN) // reset ansi style
 				ch <- renderData{row: r, render: builder.String()}
@@ -415,26 +429,18 @@ func New(h, w int, bg color.Color, dm DitheringMode) (*ANSImage, error) {
 		bgG:       uint8(g),
 		bgB:       uint8(b),
 		dithering: dm,
-		pixmap:    nil,
+		pixmap:    make([]ANSIpixel, h*w),
 	}
 
-	ansimage.pixmap = func() [][]*ANSIpixel {
-		v := make([][]*ANSIpixel, h)
-		for y := 0; y < h; y++ {
-			v[y] = make([]*ANSIpixel, w)
-			for x := 0; x < w; x++ {
-				v[y][x] = &ANSIpixel{
-					R:          0,
-					G:          0,
-					B:          0,
-					Brightness: 0,
-					source:     ansimage,
-					upper:      ((dm == NoDithering) && (y%2 == 0)),
-				}
-			}
+	for y := 0; y < h; y++ {
+		upper := (dm == NoDithering) && (y%2 == 0)
+		row := y * w
+		for x := 0; x < w; x++ {
+			p := &ansimage.pixmap[row+x]
+			p.source = ansimage
+			p.upper = upper
 		}
-		return v
-	}()
+	}
 
 	return ansimage, nil
 }
