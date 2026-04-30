@@ -39,7 +39,6 @@ var (
 )
 
 func init() {
-	runtime.GOMAXPROCS(runtime.NumCPU()) // use paralelism for goroutines!
 	prepareLogoStuff()
 	configureFlags()
 }

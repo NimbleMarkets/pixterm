@@ -288,8 +288,7 @@ func (ai *ANSImage) DitheringMode() DitheringMode {
 	return ai.dithering
 }
 
-// SetMaxProcs sets the maximum number of parallel goroutines to render the ANSImage
-// (user should manually sets `runtime.GOMAXPROCS(max)` before to this change takes effect).
+// SetMaxProcs sets the maximum number of parallel goroutines to render the ANSImage.
 // Values less than 1 are clamped to 1; otherwise the render loop's outer
 // step `y += ai.maxprocs` would never advance (or go negative).
 func (ai *ANSImage) SetMaxProcs(max int) {
