@@ -127,29 +127,29 @@ func (ap *ANSIpixel) Render() string {
 // Can specify if it renders in form of Go code 'fmt.Printf()'.
 // Can specify if background color will be disabled in dithering mode.
 func (ap *ANSIpixel) RenderExt(renderGoCode, disableBgColor bool) string {
-	backslash033 := "\033"
-	if renderGoCode {
-		backslash033 = "\\033"
-	}
+	var builder strings.Builder
+	builder.Grow(48)
+	writeANSIPixel(&builder, ap, ansiEscape(renderGoCode), disableBgColor)
+	return builder.String()
+}
 
+func ansiEscape(renderGoCode bool) string {
+	if renderGoCode {
+		return "\\033"
+	}
+	return "\033"
+}
+
+func writeANSIPixel(builder *strings.Builder, ap *ANSIpixel, backslash033 string, disableBgColor bool) {
 	// WITHOUT DITHERING
 	if ap.source.dithering == NoDithering {
-		var renderStr string
 		if ap.upper {
-			renderStr = fmt.Sprintf(
-				"%s[48;2;%d;%d;%dm",
-				backslash033,
-				ap.R, ap.G, ap.B,
-			)
+			writeANSIColor(builder, backslash033, "48", ap.R, ap.G, ap.B)
 		} else {
-			renderStr = fmt.Sprintf(
-				"%s[38;2;%d;%d;%dm%s",
-				backslash033,
-				ap.R, ap.G, ap.B,
-				lowerHalfBlock,
-			)
+			writeANSIColor(builder, backslash033, "38", ap.R, ap.G, ap.B)
+			builder.WriteString(lowerHalfBlock)
 		}
-		return renderStr
+		return
 	}
 
 	// WITH DITHERING
@@ -192,21 +192,55 @@ func (ap *ANSIpixel) RenderExt(renderGoCode, disableBgColor bool) string {
 		panic(errUnknownDitheringMode)
 	}
 
-	bgColorStr := fmt.Sprintf(
-		"%s[48;2;%d;%d;%dm",
-		backslash033,
-		ap.source.bgR, ap.source.bgG, ap.source.bgB,
-	)
-	if disableBgColor {
-		bgColorStr = ""
+	if !disableBgColor {
+		writeANSIColor(builder, backslash033, "48", ap.source.bgR, ap.source.bgG, ap.source.bgB)
 	}
-	return fmt.Sprintf(
-		"%s%s[38;2;%d;%d;%dm%s",
-		bgColorStr,
-		backslash033,
-		ap.R, ap.G, ap.B,
-		block,
-	)
+	writeANSIColor(builder, backslash033, "38", ap.R, ap.G, ap.B)
+	builder.WriteString(block)
+}
+
+func writeANSIColor(builder *strings.Builder, backslash033, colorCode string, r, g, b uint8) {
+	builder.WriteString(backslash033)
+	builder.WriteByte('[')
+	builder.WriteString(colorCode)
+	builder.WriteString(";2;")
+	writeUint8(builder, r)
+	builder.WriteByte(';')
+	writeUint8(builder, g)
+	builder.WriteByte(';')
+	writeUint8(builder, b)
+	builder.WriteByte('m')
+}
+
+func writeUint8(builder *strings.Builder, v uint8) {
+	if v >= 100 {
+		builder.WriteByte('0' + v/100)
+		builder.WriteByte('0' + v/10%10)
+		builder.WriteByte('0' + v%10)
+		return
+	}
+	if v >= 10 {
+		builder.WriteByte('0' + v/10)
+		builder.WriteByte('0' + v%10)
+		return
+	}
+	builder.WriteByte('0' + v)
+}
+
+func writeReset(builder *strings.Builder, backslash033, backslashN string) {
+	builder.WriteString(backslash033)
+	builder.WriteString("[0m")
+	builder.WriteString(backslashN)
+}
+
+func wrapGoPrint(render string) string {
+	var builder strings.Builder
+	builder.Grow(len(render) + len(`fmt.Print("")`) + 1)
+	builder.WriteString(`fmt.Print("`)
+	builder.WriteString(render)
+	builder.WriteString(`")`)
+	builder.WriteByte('\n')
+	return builder.String()
 }
 
 // Height gets total rows of ANSImage.
@@ -285,10 +319,9 @@ func (ai *ANSImage) RenderExt(renderGoCode, disableBgColor bool) string {
 	}
 
 	backslashN := "\n"
-	backslash033 := "\033"
+	backslash033 := ansiEscape(renderGoCode)
 	if renderGoCode {
 		backslashN = "\\n"
-		backslash033 = "\\033"
 	}
 
 	// WITHOUT DITHERING
@@ -304,19 +337,20 @@ func (ai *ANSImage) RenderExt(renderGoCode, disableBgColor bool) string {
 			for n, r := 0, batch; (n < ai.maxprocs) && (r < nRows); n, r = n+1, batch+n+1 {
 				go func(r int) {
 					py := 2 * r
-					var str string
+					var builder strings.Builder
+					builder.Grow(ai.w*48 + 16)
 					for x := 0; x < ai.w; x++ {
-						str += ai.pixmap[py][x].RenderExt(renderGoCode, disableBgColor)   // upper pixel
-						str += ai.pixmap[py+1][x].RenderExt(renderGoCode, disableBgColor) // lower pixel
+						writeANSIPixel(&builder, ai.pixmap[py][x], backslash033, disableBgColor)   // upper pixel
+						writeANSIPixel(&builder, ai.pixmap[py+1][x], backslash033, disableBgColor) // lower pixel
 					}
-					str += fmt.Sprintf("%s[0m%s", backslash033, backslashN) // reset ansi style
-					ch <- renderData{row: r, render: str}
+					writeReset(&builder, backslash033, backslashN) // reset ansi style
+					ch <- renderData{row: r, render: builder.String()}
 				}(r)
 			}
 			for n, r := 0, batch; (n < ai.maxprocs) && (r < nRows); n, r = n+1, batch+n+1 {
 				data := <-ch
 				if renderGoCode {
-					data.render = fmt.Sprintf(`fmt.Print("%s")%s`, data.render, "\n")
+					data.render = wrapGoPrint(data.render)
 				}
 				rows[data.row] = data.render
 			}
@@ -331,18 +365,19 @@ func (ai *ANSImage) RenderExt(renderGoCode, disableBgColor bool) string {
 		ch := make(chan renderData, ai.maxprocs)
 		for n, r := 0, batch; (n < ai.maxprocs) && (r < ai.h); n, r = n+1, batch+n+1 {
 			go func(r int) {
-				var str string
+				var builder strings.Builder
+				builder.Grow(ai.w*48 + 16)
 				for x := 0; x < ai.w; x++ {
-					str += ai.pixmap[r][x].RenderExt(renderGoCode, disableBgColor)
+					writeANSIPixel(&builder, ai.pixmap[r][x], backslash033, disableBgColor)
 				}
-				str += fmt.Sprintf("%s[0m%s", backslash033, backslashN) // reset ansi style
-				ch <- renderData{row: r, render: str}
+				writeReset(&builder, backslash033, backslashN) // reset ansi style
+				ch <- renderData{row: r, render: builder.String()}
 			}(r)
 		}
 		for n, r := 0, batch; (n < ai.maxprocs) && (r < ai.h); n, r = n+1, batch+n+1 {
 			data := <-ch
 			if renderGoCode {
-				data.render = fmt.Sprintf(`fmt.Print("%s")%s`, data.render, "\n")
+				data.render = wrapGoPrint(data.render)
 			}
 			rows[data.row] = data.render
 		}
