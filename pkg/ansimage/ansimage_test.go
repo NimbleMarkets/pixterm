@@ -177,6 +177,33 @@ func TestSetAtGetAtBoundsAndCopy(t *testing.T) {
 	}
 }
 
+func TestWriteUint8(t *testing.T) {
+	tests := []struct {
+		value uint8
+		want  string
+	}{
+		{0, "0"},
+		{1, "1"},
+		{9, "9"},
+		{10, "10"},
+		{42, "42"},
+		{99, "99"},
+		{100, "100"},
+		{101, "101"},
+		{255, "255"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			var builder strings.Builder
+			writeUint8(&builder, tt.value)
+			if got := builder.String(); got != tt.want {
+				t.Fatalf("writeUint8(%d) = %q, want %q", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRenderExt_NoDithering_ExactANSI(t *testing.T) {
 	a, err := New(2, 2, color.Transparent, NoDithering)
 	if err != nil {
