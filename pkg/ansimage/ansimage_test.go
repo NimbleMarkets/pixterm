@@ -589,6 +589,29 @@ func TestNewFromImage_DitheringAveragesBlocks(t *testing.T) {
 	requirePixel(t, a, 1, 1, wantANSIPixel{r: 255, g: 128, brightness: 255})
 }
 
+func TestNewFromImage_DitheringTransparentPixelsContributeZero(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 2*BlockSizeX, 2*BlockSizeY))
+	for y := 0; y < 2*BlockSizeY; y++ {
+		for x := 0; x < 2*BlockSizeX; x++ {
+			if (x+y)%2 == 0 {
+				src.SetRGBA(x, y, color.RGBA{R: 200, G: 100, B: 50, A: 0})
+			} else {
+				src.SetRGBA(x, y, color.RGBA{R: 10, G: 20, B: 30, A: 255})
+			}
+		}
+	}
+
+	a, err := NewFromImage(src, color.Transparent, DitheringWithBlocks)
+	if err != nil {
+		t.Fatalf("NewFromImage: %v", err)
+	}
+	for y := 0; y < a.h; y++ {
+		for x := 0; x < a.w; x++ {
+			requirePixel(t, a, y, x, wantANSIPixel{r: 5, g: 10, b: 15, brightness: 15})
+		}
+	}
+}
+
 func TestRenderExt_MaxProcsDeterministic(t *testing.T) {
 	tests := []struct {
 		name string
