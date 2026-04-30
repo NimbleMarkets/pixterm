@@ -643,11 +643,15 @@ func createANSImage(img image.Image, bg color.Color, dm DitheringMode) (*ANSImag
 
 	if dm == NoDithering {
 		for y := 0; y < h; y++ {
+			srcOffset := rgbaOut.PixOffset(xMin, yMin+y)
+			dstOffset := y * w
 			for x := 0; x < w; x++ {
-				v := rgbaOut.RGBAAt(xMin+x, yMin+y)
-				if err := ansimage.SetAt(y, x, v.R, v.G, v.B, 0); err != nil {
-					return nil, err
+				ansimage.pixmap[dstOffset+x] = ansiPixelData{
+					R: rgbaOut.Pix[srcOffset],
+					G: rgbaOut.Pix[srcOffset+1],
+					B: rgbaOut.Pix[srcOffset+2],
 				}
+				srcOffset += 4
 			}
 		}
 	} else {
@@ -686,8 +690,11 @@ func createANSImage(img image.Image, bg color.Color, dm DitheringMode) (*ANSImag
 				b := uint8((sumB + pixelCount/2) / pixelCount)
 				brightness := uint8((sumBri + pixelCount/2) / pixelCount)
 
-				if err := ansimage.SetAt(y, x, r, g, b, brightness); err != nil {
-					return nil, err
+				ansimage.pixmap[y*w+x] = ansiPixelData{
+					Brightness: brightness,
+					R:          r,
+					G:          g,
+					B:          b,
 				}
 			}
 		}
