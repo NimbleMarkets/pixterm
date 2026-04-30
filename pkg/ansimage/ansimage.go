@@ -107,6 +107,11 @@ type ANSIpixel struct {
 	source     *ANSImage
 }
 
+type ansiPixelData struct {
+	Brightness uint8
+	R, G, B    uint8
+}
+
 // ANSImage represents an image encoded in ANSI escape codes.
 type ANSImage struct {
 	h, w      int
@@ -115,7 +120,7 @@ type ANSImage struct {
 	bgG       uint8
 	bgB       uint8
 	dithering DitheringMode
-	pixmap    []ANSIpixel
+	pixmap    []ansiPixelData
 }
 
 // Render returns the ANSI-compatible string form of ANSI-pixel.
@@ -141,12 +146,21 @@ func ansiEscape(renderGoCode bool) string {
 }
 
 func writeANSIPixel(builder *strings.Builder, ap *ANSIpixel, backslash033 string, disableBgColor bool) {
+	writeANSIPixelData(builder, ansiPixelData{
+		Brightness: ap.Brightness,
+		R:          ap.R,
+		G:          ap.G,
+		B:          ap.B,
+	}, ap.source, ap.upper, backslash033, disableBgColor)
+}
+
+func writeANSIPixelData(builder *strings.Builder, p ansiPixelData, source *ANSImage, upper bool, backslash033 string, disableBgColor bool) {
 	// WITHOUT DITHERING
-	if ap.source.dithering == NoDithering {
-		if ap.upper {
-			writeANSIColor(builder, backslash033, "48", ap.R, ap.G, ap.B)
+	if source.dithering == NoDithering {
+		if upper {
+			writeANSIColor(builder, backslash033, "48", p.R, p.G, p.B)
 		} else {
-			writeANSIColor(builder, backslash033, "38", ap.R, ap.G, ap.B)
+			writeANSIColor(builder, backslash033, "38", p.R, p.G, p.B)
 			builder.WriteString(lowerHalfBlock)
 		}
 		return
@@ -154,8 +168,8 @@ func writeANSIPixel(builder *strings.Builder, ap *ANSIpixel, backslash033 string
 
 	// WITH DITHERING
 	block := " "
-	if ap.source.dithering == DitheringWithBlocks {
-		switch bri := ap.Brightness; {
+	if source.dithering == DitheringWithBlocks {
+		switch bri := p.Brightness; {
 		case bri > 204:
 			block = fullBlock
 		case bri > 152:
@@ -165,8 +179,8 @@ func writeANSIPixel(builder *strings.Builder, ap *ANSIpixel, backslash033 string
 		case bri > 48:
 			block = lightShadeBlock
 		}
-	} else if ap.source.dithering == DitheringWithChars {
-		switch bri := ap.Brightness; {
+	} else if source.dithering == DitheringWithChars {
+		switch bri := p.Brightness; {
 		case bri > 230:
 			block = "#"
 		case bri > 207:
@@ -193,9 +207,9 @@ func writeANSIPixel(builder *strings.Builder, ap *ANSIpixel, backslash033 string
 	}
 
 	if !disableBgColor {
-		writeANSIColor(builder, backslash033, "48", ap.source.bgR, ap.source.bgG, ap.source.bgB)
+		writeANSIColor(builder, backslash033, "48", source.bgR, source.bgG, source.bgB)
 	}
-	writeANSIColor(builder, backslash033, "38", ap.R, ap.G, ap.B)
+	writeANSIColor(builder, backslash033, "38", p.R, p.G, p.B)
 	builder.WriteString(block)
 }
 
@@ -278,7 +292,7 @@ func (ai *ANSImage) pixelIndex(y, x int) int {
 	return y*ai.w + x
 }
 
-func (ai *ANSImage) pixelAt(y, x int) *ANSIpixel {
+func (ai *ANSImage) pixelAt(y, x int) *ansiPixelData {
 	return &ai.pixmap[ai.pixelIndex(y, x)]
 }
 
@@ -290,8 +304,6 @@ func (ai *ANSImage) SetAt(y, x int, r, g, b, brightness uint8) error {
 		p.G = g
 		p.B = b
 		p.Brightness = brightness
-		p.upper = ((ai.dithering == NoDithering) && (y%2 == 0))
-		p.source = ai
 		return nil
 	}
 	return ErrOutOfBounds
@@ -306,8 +318,8 @@ func (ai *ANSImage) GetAt(y, x int) (*ANSIpixel, error) {
 				G:          p.G,
 				B:          p.B,
 				Brightness: p.Brightness,
-				upper:      p.upper,
-				source:     p.source,
+				upper:      (ai.dithering == NoDithering) && (y%2 == 0),
+				source:     ai,
 			},
 			nil
 	}
@@ -353,8 +365,8 @@ func (ai *ANSImage) RenderExt(renderGoCode, disableBgColor bool) string {
 					var builder strings.Builder
 					builder.Grow(ai.w*48 + 16)
 					for x := 0; x < ai.w; x++ {
-						writeANSIPixel(&builder, &ai.pixmap[upperRow+x], backslash033, disableBgColor) // upper pixel
-						writeANSIPixel(&builder, &ai.pixmap[lowerRow+x], backslash033, disableBgColor) // lower pixel
+						writeANSIPixelData(&builder, ai.pixmap[upperRow+x], ai, true, backslash033, disableBgColor)  // upper pixel
+						writeANSIPixelData(&builder, ai.pixmap[lowerRow+x], ai, false, backslash033, disableBgColor) // lower pixel
 					}
 					writeReset(&builder, backslash033, backslashN) // reset ansi style
 					ch <- renderData{row: r, render: builder.String()}
@@ -382,7 +394,7 @@ func (ai *ANSImage) RenderExt(renderGoCode, disableBgColor bool) string {
 				var builder strings.Builder
 				builder.Grow(ai.w*48 + 16)
 				for x := 0; x < ai.w; x++ {
-					writeANSIPixel(&builder, &ai.pixmap[row+x], backslash033, disableBgColor)
+					writeANSIPixelData(&builder, ai.pixmap[row+x], ai, false, backslash033, disableBgColor)
 				}
 				writeReset(&builder, backslash033, backslashN) // reset ansi style
 				ch <- renderData{row: r, render: builder.String()}
@@ -429,17 +441,7 @@ func New(h, w int, bg color.Color, dm DitheringMode) (*ANSImage, error) {
 		bgG:       uint8(g),
 		bgB:       uint8(b),
 		dithering: dm,
-		pixmap:    make([]ANSIpixel, h*w),
-	}
-
-	for y := 0; y < h; y++ {
-		upper := (dm == NoDithering) && (y%2 == 0)
-		row := y * w
-		for x := 0; x < w; x++ {
-			p := &ansimage.pixmap[row+x]
-			p.source = ansimage
-			p.upper = upper
-		}
+		pixmap:    make([]ansiPixelData, h*w),
 	}
 
 	return ansimage, nil
