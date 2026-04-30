@@ -33,7 +33,6 @@ import (
 	_ "golang.org/x/image/webp" // initialize decoder
 
 	"github.com/disintegration/imaging"
-	"github.com/lucasb-eyer/go-colorful"
 )
 
 // Unicode Block Element character used to represent lower pixel in terminal row.
@@ -255,6 +254,30 @@ func wrapGoPrint(render string) string {
 	builder.WriteString(`")`)
 	builder.WriteByte('\n')
 	return builder.String()
+}
+
+func rgbaComponent(c, a uint8) uint8 {
+	if a == 0 || c == 0 {
+		return 0
+	}
+	if a == 0xff {
+		return c
+	}
+	v := uint32(c) * 0xff / uint32(a)
+	if v > 0xff {
+		return 0xff
+	}
+	return uint8(v)
+}
+
+func maxRGB(r, g, b uint8) uint8 {
+	if g > r {
+		r = g
+	}
+	if b > r {
+		r = b
+	}
+	return r
 }
 
 // Height gets total rows of ANSImage.
@@ -628,32 +651,40 @@ func createANSImage(img image.Image, bg color.Color, dm DitheringMode) (*ANSImag
 			}
 		}
 	} else {
-		pixelCount := BlockSizeY * BlockSizeX
+		const pixelCount = uint32(BlockSizeY * BlockSizeX)
 
 		for y := 0; y < h; y++ {
 			for x := 0; x < w; x++ {
 
-				var sumR, sumG, sumB, sumBri float64
+				var sumR, sumG, sumB, sumBri uint32
 				for dy := 0; dy < BlockSizeY; dy++ {
 					py := yMin + BlockSizeY*y + dy
+					offset := rgbaOut.PixOffset(xMin+BlockSizeX*x, py)
 
 					for dx := 0; dx < BlockSizeX; dx++ {
-						px := xMin + BlockSizeX*x + dx
+						r := rgbaOut.Pix[offset]
+						g := rgbaOut.Pix[offset+1]
+						b := rgbaOut.Pix[offset+2]
+						a := rgbaOut.Pix[offset+3]
+						offset += 4
 
-						pixel := rgbaOut.At(px, py)
-						color, _ := colorful.MakeColor(pixel)
-						_, _, v := color.Hsv()
-						sumR += color.R
-						sumG += color.G
-						sumB += color.B
-						sumBri += v
+						if a != 0xff {
+							r = rgbaComponent(r, a)
+							g = rgbaComponent(g, a)
+							b = rgbaComponent(b, a)
+						}
+
+						sumR += uint32(r)
+						sumG += uint32(g)
+						sumB += uint32(b)
+						sumBri += uint32(maxRGB(r, g, b))
 					}
 				}
 
-				r := uint8(sumR/float64(pixelCount)*255.0 + 0.5)
-				g := uint8(sumG/float64(pixelCount)*255.0 + 0.5)
-				b := uint8(sumB/float64(pixelCount)*255.0 + 0.5)
-				brightness := uint8(sumBri/float64(pixelCount)*255.0 + 0.5)
+				r := uint8((sumR + pixelCount/2) / pixelCount)
+				g := uint8((sumG + pixelCount/2) / pixelCount)
+				b := uint8((sumB + pixelCount/2) / pixelCount)
+				brightness := uint8((sumBri + pixelCount/2) / pixelCount)
 
 				if err := ansimage.SetAt(y, x, r, g, b, brightness); err != nil {
 					return nil, err
