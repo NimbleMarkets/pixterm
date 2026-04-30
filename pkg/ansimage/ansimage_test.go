@@ -94,6 +94,208 @@ func renderWithTimeout(t *testing.T, a *ANSImage, deadline time.Duration) {
 	}
 }
 
+func gradientRGBA(w, h int) *image.RGBA {
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.SetRGBA(x, y, color.RGBA{
+				R: uint8((x*3 + y*5) & 0xff),
+				G: uint8((x*7 + y*11) & 0xff),
+				B: uint8((x*13 + y*17) & 0xff),
+				A: 0xff,
+			})
+		}
+	}
+	return img
+}
+
+type wantANSIPixel struct {
+	r, g, b, brightness uint8
+}
+
+func requirePixel(t *testing.T, a *ANSImage, y, x int, want wantANSIPixel) {
+	t.Helper()
+	p, err := a.GetAt(y, x)
+	if err != nil {
+		t.Fatalf("GetAt(%d,%d): %v", y, x, err)
+	}
+	if p.R != want.r || p.G != want.g || p.B != want.b || p.Brightness != want.brightness {
+		t.Fatalf("pixel at (%d,%d): got RGBA(%d,%d,%d,%d), want RGBA(%d,%d,%d,%d)",
+			y, x, p.R, p.G, p.B, p.Brightness, want.r, want.g, want.b, want.brightness)
+	}
+}
+
+func TestNewValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		h, w int
+		dm   DitheringMode
+		want error
+	}{
+		{"NoDitheringOddHeight", 3, 2, NoDithering, ErrHeightNonMoT},
+		{"TooShort", 1, 2, DitheringWithBlocks, ErrInvalidBoundsMoT},
+		{"TooNarrow", 2, 1, DitheringWithChars, ErrInvalidBoundsMoT},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := New(tt.h, tt.w, color.Transparent, tt.dm)
+			if err != tt.want {
+				t.Fatalf("New(%d,%d): got %v, want %v", tt.h, tt.w, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestSetAtGetAtBoundsAndCopy(t *testing.T) {
+	a, err := New(2, 2, color.Transparent, NoDithering)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if err := a.SetAt(0, 0, 10, 20, 30, 40); err != nil {
+		t.Fatalf("SetAt: %v", err)
+	}
+	p, err := a.GetAt(0, 0)
+	if err != nil {
+		t.Fatalf("GetAt: %v", err)
+	}
+	p.R = 99
+	again, err := a.GetAt(0, 0)
+	if err != nil {
+		t.Fatalf("GetAt again: %v", err)
+	}
+	if again.R != 10 {
+		t.Fatalf("GetAt returned an alias: got R=%d after mutating copy, want 10", again.R)
+	}
+
+	if err := a.SetAt(-1, 0, 0, 0, 0, 0); err != ErrOutOfBounds {
+		t.Fatalf("SetAt out of bounds: got %v, want %v", err, ErrOutOfBounds)
+	}
+	if _, err := a.GetAt(0, 2); err != ErrOutOfBounds {
+		t.Fatalf("GetAt out of bounds: got %v, want %v", err, ErrOutOfBounds)
+	}
+}
+
+func TestRenderExt_NoDithering_ExactANSI(t *testing.T) {
+	a, err := New(2, 2, color.Transparent, NoDithering)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	values := []struct {
+		y, x         int
+		r, g, b, bri uint8
+	}{
+		{0, 0, 1, 2, 3, 0},
+		{1, 0, 7, 8, 9, 0},
+		{0, 1, 4, 5, 6, 0},
+		{1, 1, 10, 11, 12, 0},
+	}
+	for _, v := range values {
+		if err := a.SetAt(v.y, v.x, v.r, v.g, v.b, v.bri); err != nil {
+			t.Fatalf("SetAt(%d,%d): %v", v.y, v.x, err)
+		}
+	}
+
+	want := "\033[48;2;1;2;3m" +
+		"\033[38;2;7;8;9m" + lowerHalfBlock +
+		"\033[48;2;4;5;6m" +
+		"\033[38;2;10;11;12m" + lowerHalfBlock +
+		"\033[0m\n"
+	if got := a.RenderExt(false, false); got != want {
+		t.Fatalf("RenderExt exact output mismatch:\ngot  %q\nwant %q", got, want)
+	}
+}
+
+func TestRenderExt_DitheringWithBlocks_ExactANSI(t *testing.T) {
+	a, err := New(2, 2, color.RGBA{R: 1, G: 2, B: 3, A: 255}, DitheringWithBlocks)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	values := []struct {
+		y, x         int
+		r, g, b, bri uint8
+	}{
+		{0, 0, 10, 20, 30, 205},
+		{0, 1, 40, 50, 60, 153},
+		{1, 0, 70, 80, 90, 101},
+		{1, 1, 100, 110, 120, 49},
+	}
+	for _, v := range values {
+		if err := a.SetAt(v.y, v.x, v.r, v.g, v.b, v.bri); err != nil {
+			t.Fatalf("SetAt(%d,%d): %v", v.y, v.x, err)
+		}
+	}
+
+	want := "\033[48;2;1;2;3m\033[38;2;10;20;30m" + fullBlock +
+		"\033[48;2;1;2;3m\033[38;2;40;50;60m" + darkShadeBlock +
+		"\033[0m\n" +
+		"\033[48;2;1;2;3m\033[38;2;70;80;90m" + mediumShadeBlock +
+		"\033[48;2;1;2;3m\033[38;2;100;110;120m" + lightShadeBlock +
+		"\033[0m\n"
+	if got := a.RenderExt(false, false); got != want {
+		t.Fatalf("RenderExt exact output mismatch:\ngot  %q\nwant %q", got, want)
+	}
+}
+
+func TestRenderExt_DitheringWithChars_DisableBackground_ExactANSI(t *testing.T) {
+	a, err := New(2, 2, color.RGBA{R: 1, G: 2, B: 3, A: 255}, DitheringWithChars)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	values := []struct {
+		y, x         int
+		r, g, b, bri uint8
+	}{
+		{0, 0, 10, 20, 30, 231},
+		{0, 1, 40, 50, 60, 208},
+		{1, 0, 70, 80, 90, 24},
+		{1, 1, 100, 110, 120, 23},
+	}
+	for _, v := range values {
+		if err := a.SetAt(v.y, v.x, v.r, v.g, v.b, v.bri); err != nil {
+			t.Fatalf("SetAt(%d,%d): %v", v.y, v.x, err)
+		}
+	}
+
+	want := "\033[38;2;10;20;30m#" +
+		"\033[38;2;40;50;60m&" +
+		"\033[0m\n" +
+		"\033[38;2;70;80;90m." +
+		"\033[38;2;100;110;120m " +
+		"\033[0m\n"
+	if got := a.RenderExt(false, true); got != want {
+		t.Fatalf("RenderExt exact output mismatch:\ngot  %q\nwant %q", got, want)
+	}
+}
+
+func TestRenderExt_GoCodeOutput(t *testing.T) {
+	a, err := New(2, 2, color.Transparent, NoDithering)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := a.SetAt(0, 0, 1, 2, 3, 0); err != nil {
+		t.Fatalf("SetAt: %v", err)
+	}
+	if err := a.SetAt(1, 0, 4, 5, 6, 0); err != nil {
+		t.Fatalf("SetAt: %v", err)
+	}
+	if err := a.SetAt(0, 1, 7, 8, 9, 0); err != nil {
+		t.Fatalf("SetAt: %v", err)
+	}
+	if err := a.SetAt(1, 1, 10, 11, 12, 0); err != nil {
+		t.Fatalf("SetAt: %v", err)
+	}
+
+	got := a.RenderExt(true, false)
+	if !strings.HasPrefix(got, `fmt.Print("\033[48;2;1;2;3m`) {
+		t.Fatalf("Go-code output prefix mismatch: %q", got)
+	}
+	if !strings.HasSuffix(got, `\033[0m\n")`+"\n") {
+		t.Fatalf("Go-code output suffix mismatch: %q", got)
+	}
+}
+
 // TestSetMaxProcsZero_DoesNotHang ensures that calling SetMaxProcs(0) does
 // not cause RenderExt to spin forever. Without a clamp, the outer render
 // loop is `for y := 0; y < ai.h; y += ai.maxprocs` and `y += 0` never makes
@@ -275,6 +477,113 @@ func TestNewFromImage_SubImage_NonRGBA(t *testing.T) {
 					y, x, p.R, p.G, p.B, fill.R, fill.G, fill.B)
 			}
 		}
+	}
+}
+
+func TestNewFromImage_NoDithering_OddHeightTruncatesLastRow(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 3, 3))
+	rowColors := []color.RGBA{
+		{R: 10, G: 20, B: 30, A: 255},
+		{R: 40, G: 50, B: 60, A: 255},
+		{R: 70, G: 80, B: 90, A: 255},
+	}
+	for y, c := range rowColors {
+		for x := 0; x < 3; x++ {
+			src.SetRGBA(x, y, c)
+		}
+	}
+
+	a, err := NewFromImage(src, color.Transparent, NoDithering)
+	if err != nil {
+		t.Fatalf("NewFromImage: %v", err)
+	}
+	if a.h != 2 || a.w != 3 {
+		t.Fatalf("dimensions: got %dx%d, want 2x3", a.h, a.w)
+	}
+	for x := 0; x < a.w; x++ {
+		requirePixel(t, a, 0, x, wantANSIPixel{r: 10, g: 20, b: 30})
+		requirePixel(t, a, 1, x, wantANSIPixel{r: 40, g: 50, b: 60})
+	}
+}
+
+func TestNewFromImage_OpaqueBackgroundCompositesTransparentPixels(t *testing.T) {
+	bg := color.RGBA{R: 11, G: 22, B: 33, A: 255}
+	opaque := color.NRGBA{R: 200, G: 100, B: 50, A: 255}
+	src := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+	src.SetNRGBA(0, 0, color.NRGBA{R: 250, G: 240, B: 230, A: 0})
+	src.SetNRGBA(1, 0, opaque)
+	src.SetNRGBA(0, 1, opaque)
+	src.SetNRGBA(1, 1, color.NRGBA{R: 250, G: 240, B: 230, A: 0})
+
+	a, err := NewFromImage(src, bg, NoDithering)
+	if err != nil {
+		t.Fatalf("NewFromImage: %v", err)
+	}
+	requirePixel(t, a, 0, 0, wantANSIPixel{r: bg.R, g: bg.G, b: bg.B})
+	requirePixel(t, a, 0, 1, wantANSIPixel{r: opaque.R, g: opaque.G, b: opaque.B})
+	requirePixel(t, a, 1, 0, wantANSIPixel{r: opaque.R, g: opaque.G, b: opaque.B})
+	requirePixel(t, a, 1, 1, wantANSIPixel{r: bg.R, g: bg.G, b: bg.B})
+}
+
+func TestNewFromImage_DitheringAveragesBlocks(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 8, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 8; x++ {
+			switch {
+			case y < 8 && x < 4:
+				if (x+y)%2 == 0 {
+					src.SetRGBA(x, y, color.RGBA{R: 200, A: 255})
+				} else {
+					src.SetRGBA(x, y, color.RGBA{A: 255})
+				}
+			case y < 8 && x >= 4:
+				src.SetRGBA(x, y, color.RGBA{R: 10, G: 20, B: 30, A: 255})
+			case y >= 8 && x < 4:
+				src.SetRGBA(x, y, color.RGBA{R: 40, G: 90, B: 70, A: 255})
+			default:
+				src.SetRGBA(x, y, color.RGBA{R: 255, G: 128, B: 0, A: 255})
+			}
+		}
+	}
+
+	a, err := NewFromImage(src, color.Transparent, DitheringWithBlocks)
+	if err != nil {
+		t.Fatalf("NewFromImage: %v", err)
+	}
+	if a.h != 2 || a.w != 2 {
+		t.Fatalf("dimensions: got %dx%d, want 2x2", a.h, a.w)
+	}
+	requirePixel(t, a, 0, 0, wantANSIPixel{r: 100, brightness: 100})
+	requirePixel(t, a, 0, 1, wantANSIPixel{r: 10, g: 20, b: 30, brightness: 30})
+	requirePixel(t, a, 1, 0, wantANSIPixel{r: 40, g: 90, b: 70, brightness: 90})
+	requirePixel(t, a, 1, 1, wantANSIPixel{r: 255, g: 128, brightness: 255})
+}
+
+func TestRenderExt_MaxProcsDeterministic(t *testing.T) {
+	tests := []struct {
+		name string
+		dm   DitheringMode
+		w, h int
+	}{
+		{"NoDithering", NoDithering, 48, 24},
+		{"DitheringWithBlocks", DitheringWithBlocks, 48, 24},
+		{"DitheringWithChars", DitheringWithChars, 48, 24},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a, err := NewFromImage(gradientRGBA(tt.w, tt.h), color.Transparent, tt.dm)
+			if err != nil {
+				t.Fatalf("NewFromImage: %v", err)
+			}
+			a.SetMaxProcs(1)
+			want := a.RenderExt(false, false)
+			for _, maxprocs := range []int{2, 3, 4, 7, 16} {
+				a.SetMaxProcs(maxprocs)
+				if got := a.RenderExt(false, false); got != want {
+					t.Fatalf("RenderExt maxprocs=%d differed from maxprocs=1", maxprocs)
+				}
+			}
+		})
 	}
 }
 
