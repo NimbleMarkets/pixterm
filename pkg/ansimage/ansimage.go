@@ -162,50 +162,56 @@ func appendANSIPixelData(buf []byte, p ansiPixelData, source *ANSImage, upper bo
 	}
 
 	// WITH DITHERING
-	block := " "
-	if source.dithering == DitheringWithBlocks {
-		switch bri := p.Brightness; {
-		case bri > 204:
-			block = fullBlock
-		case bri > 152:
-			block = darkShadeBlock
-		case bri > 100:
-			block = mediumShadeBlock
-		case bri > 48:
-			block = lightShadeBlock
-		}
-	} else if source.dithering == DitheringWithChars {
-		switch bri := p.Brightness; {
-		case bri > 230:
-			block = "#"
-		case bri > 207:
-			block = "&"
-		case bri > 184:
-			block = "$"
-		case bri > 161:
-			block = "X"
-		case bri > 138:
-			block = "x"
-		case bri > 115:
-			block = "="
-		case bri > 92:
-			block = "+"
-		case bri > 69:
-			block = ";"
-		case bri > 46:
-			block = ":"
-		case bri > 23:
-			block = "."
-		}
-	} else {
-		panic(errUnknownDitheringMode)
-	}
-
 	if !disableBgColor {
 		buf = appendANSIColor(buf, backslash033, "48", source.bgR, source.bgG, source.bgB)
 	}
 	buf = appendANSIColor(buf, backslash033, "38", p.R, p.G, p.B)
-	return append(buf, block...)
+	return append(buf, ditherBlock(p.Brightness, source.dithering)...)
+}
+
+// ditherBlock maps an aggregated 8-bit brightness to its rendered glyph for
+// the given dithering mode. Returns " " when no glyph threshold is reached.
+func ditherBlock(brightness uint8, mode DitheringMode) string {
+	switch mode {
+	case DitheringWithBlocks:
+		switch {
+		case brightness > 204:
+			return fullBlock
+		case brightness > 152:
+			return darkShadeBlock
+		case brightness > 100:
+			return mediumShadeBlock
+		case brightness > 48:
+			return lightShadeBlock
+		}
+		return " "
+	case DitheringWithChars:
+		switch {
+		case brightness > 230:
+			return "#"
+		case brightness > 207:
+			return "&"
+		case brightness > 184:
+			return "$"
+		case brightness > 161:
+			return "X"
+		case brightness > 138:
+			return "x"
+		case brightness > 115:
+			return "="
+		case brightness > 92:
+			return "+"
+		case brightness > 69:
+			return ";"
+		case brightness > 46:
+			return ":"
+		case brightness > 23:
+			return "."
+		}
+		return " "
+	default:
+		panic(errUnknownDitheringMode)
+	}
 }
 
 func appendANSIColor(buf []byte, backslash033, colorCode string, r, g, b uint8) []byte {
@@ -463,7 +469,7 @@ func (ai *ANSImage) appendRow(buf []byte, r int, renderGoCode, disableBgColor bo
 		buf = appendGoPrintStart(buf)
 	}
 	if ai.dithering == NoDithering {
-		buf = ai.appendNoDitheringRow(buf, r, backslash033, backslashN, disableBgColor)
+		buf = ai.appendNoDitheringRow(buf, r, backslash033, backslashN)
 	} else {
 		buf = ai.appendDitheringRow(buf, r, backslash033, backslashN, disableBgColor)
 	}
@@ -473,21 +479,61 @@ func (ai *ANSImage) appendRow(buf []byte, r int, renderGoCode, disableBgColor bo
 	return buf
 }
 
-func (ai *ANSImage) appendNoDitheringRow(buf []byte, r int, backslash033, backslashN string, disableBgColor bool) []byte {
+// appendNoDitheringRow writes one half-block row, deduplicating SGR escapes:
+// the row's leading [0m reset (from the previous row) clears all attributes,
+// so the first cell must emit both bg (upper-pixel color) and fg (lower-pixel
+// color); subsequent cells skip whichever SGR matches the previously emitted
+// one.
+func (ai *ANSImage) appendNoDitheringRow(buf []byte, r int, backslash033, backslashN string) []byte {
 	py := 2 * r
 	upperRow := py * ai.w
 	lowerRow := (py + 1) * ai.w
+
+	var prevBgR, prevBgG, prevBgB uint8
+	var prevFgR, prevFgG, prevFgB uint8
+	haveBg, haveFg := false, false
+
 	for x := 0; x < ai.w; x++ {
-		buf = appendANSIPixelData(buf, ai.pixmap[upperRow+x], ai, true, backslash033, disableBgColor)
-		buf = appendANSIPixelData(buf, ai.pixmap[lowerRow+x], ai, false, backslash033, disableBgColor)
+		u := ai.pixmap[upperRow+x]
+		l := ai.pixmap[lowerRow+x]
+
+		if !haveBg || u.R != prevBgR || u.G != prevBgG || u.B != prevBgB {
+			buf = appendANSIColor(buf, backslash033, "48", u.R, u.G, u.B)
+			prevBgR, prevBgG, prevBgB = u.R, u.G, u.B
+			haveBg = true
+		}
+		if !haveFg || l.R != prevFgR || l.G != prevFgG || l.B != prevFgB {
+			buf = appendANSIColor(buf, backslash033, "38", l.R, l.G, l.B)
+			prevFgR, prevFgG, prevFgB = l.R, l.G, l.B
+			haveFg = true
+		}
+		buf = append(buf, lowerHalfBlock...)
 	}
 	return appendReset(buf, backslash033, backslashN)
 }
 
+// appendDitheringRow writes one dither-mode row. The bg color is constant
+// for the entire image, so it's emitted exactly once per row (right after
+// the previous row's [0m reset cleared state). The fg color is per-pixel
+// and dedup'd against the previously emitted fg.
 func (ai *ANSImage) appendDitheringRow(buf []byte, r int, backslash033, backslashN string, disableBgColor bool) []byte {
 	row := r * ai.w
+
+	if !disableBgColor {
+		buf = appendANSIColor(buf, backslash033, "48", ai.bgR, ai.bgG, ai.bgB)
+	}
+
+	var prevR, prevG, prevB uint8
+	haveFg := false
+
 	for x := 0; x < ai.w; x++ {
-		buf = appendANSIPixelData(buf, ai.pixmap[row+x], ai, false, backslash033, disableBgColor)
+		p := ai.pixmap[row+x]
+		if !haveFg || p.R != prevR || p.G != prevG || p.B != prevB {
+			buf = appendANSIColor(buf, backslash033, "38", p.R, p.G, p.B)
+			prevR, prevG, prevB = p.R, p.G, p.B
+			haveFg = true
+		}
+		buf = append(buf, ditherBlock(p.Brightness, ai.dithering)...)
 	}
 	return appendReset(buf, backslash033, backslashN)
 }

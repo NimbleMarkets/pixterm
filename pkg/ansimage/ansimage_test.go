@@ -256,11 +256,14 @@ func TestRenderExt_DitheringWithBlocks_ExactANSI(t *testing.T) {
 		}
 	}
 
+	// Bg is constant for the image and only emitted once per row (after the
+	// previous row's [0m reset clears state). Fg dedup'd against the prior
+	// emitted fg; here every cell has a distinct fg, so no fg-skip.
 	want := "\033[48;2;1;2;3m\033[38;2;10;20;30m" + fullBlock +
-		"\033[48;2;1;2;3m\033[38;2;40;50;60m" + darkShadeBlock +
+		"\033[38;2;40;50;60m" + darkShadeBlock +
 		"\033[0m\n" +
 		"\033[48;2;1;2;3m\033[38;2;70;80;90m" + mediumShadeBlock +
-		"\033[48;2;1;2;3m\033[38;2;100;110;120m" + lightShadeBlock +
+		"\033[38;2;100;110;120m" + lightShadeBlock +
 		"\033[0m\n"
 	if got := a.RenderExt(false, false); got != want {
 		t.Fatalf("RenderExt exact output mismatch:\ngot  %q\nwant %q", got, want)
@@ -296,6 +299,57 @@ func TestRenderExt_DitheringWithChars_DisableBackground_ExactANSI(t *testing.T) 
 	if got := a.RenderExt(false, true); got != want {
 		t.Fatalf("RenderExt exact output mismatch:\ngot  %q\nwant %q", got, want)
 	}
+}
+
+// TestRenderExt_Dedupes_RepeatedColors locks in the per-row SGR dedup
+// behavior: when a fg color is repeated across consecutive cells, the SGR
+// is emitted only once. The bg in dither mode is constant for the whole
+// image, so it's emitted exactly once per row regardless of input.
+func TestRenderExt_Dedupes_RepeatedColors(t *testing.T) {
+	t.Run("Dithering_FgRepeats", func(t *testing.T) {
+		a, err := New(2, 3, color.RGBA{R: 1, G: 2, B: 3, A: 255}, DitheringWithBlocks)
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		// Every cell shares the same fg color.
+		for y := 0; y < 2; y++ {
+			for x := 0; x < 3; x++ {
+				if err := a.SetAt(y, x, 10, 20, 30, 205); err != nil {
+					t.Fatalf("SetAt(%d,%d): %v", y, x, err)
+				}
+			}
+		}
+		row := "\033[48;2;1;2;3m\033[38;2;10;20;30m" +
+			fullBlock + fullBlock + fullBlock +
+			"\033[0m\n"
+		want := row + row
+		if got := a.RenderExt(false, false); got != want {
+			t.Fatalf("dither fg-dedup mismatch:\ngot  %q\nwant %q", got, want)
+		}
+	})
+
+	t.Run("NoDithering_FgAndBgRepeat", func(t *testing.T) {
+		a, err := New(2, 3, color.Transparent, NoDithering)
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		// Three cells; all share the same upper (bg) color and the same
+		// lower (fg) color.
+		for x := 0; x < 3; x++ {
+			if err := a.SetAt(0, x, 10, 20, 30, 0); err != nil {
+				t.Fatalf("SetAt(0,%d): %v", x, err)
+			}
+			if err := a.SetAt(1, x, 40, 50, 60, 0); err != nil {
+				t.Fatalf("SetAt(1,%d): %v", x, err)
+			}
+		}
+		want := "\033[48;2;10;20;30m\033[38;2;40;50;60m" +
+			lowerHalfBlock + lowerHalfBlock + lowerHalfBlock +
+			"\033[0m\n"
+		if got := a.RenderExt(false, false); got != want {
+			t.Fatalf("no-dither dedup mismatch:\ngot  %q\nwant %q", got, want)
+		}
+	})
 }
 
 func TestRenderExt_GoCodeOutput(t *testing.T) {
