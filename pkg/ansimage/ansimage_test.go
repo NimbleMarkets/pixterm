@@ -168,6 +168,9 @@ func TestSetAtGetAtBoundsAndCopy(t *testing.T) {
 	if again.R != 10 {
 		t.Fatalf("GetAt returned an alias: got R=%d after mutating copy, want 10", again.R)
 	}
+	if got, want := again.Render(), "\033[48;2;10;20;30m"; got != want {
+		t.Fatalf("GetAt returned a non-renderable pixel: Render() = %q, want %q", got, want)
+	}
 
 	if err := a.SetAt(-1, 0, 0, 0, 0, 0); err != ErrOutOfBounds {
 		t.Fatalf("SetAt out of bounds: got %v, want %v", err, ErrOutOfBounds)
