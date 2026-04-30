@@ -14,15 +14,13 @@ package ansimage
 import (
 	"errors"
 	"fmt"
-
+	"image"
+	"image/color"
+	"image/draw"
 	"io"
 	"net/http"
 	"os"
 	"strings"
-
-	"image"
-	"image/color"
-	"image/draw"
 
 	_ "image/gif"  // initialize decoder
 	_ "image/jpeg" // initialize decoder
@@ -256,6 +254,15 @@ func wrapGoPrint(render string) string {
 	return builder.String()
 }
 
+func writeGoPrintStart(builder *strings.Builder) {
+	builder.WriteString(`fmt.Print("`)
+}
+
+func writeGoPrintEnd(builder *strings.Builder) {
+	builder.WriteString(`")`)
+	builder.WriteByte('\n')
+}
+
 func rgbaComponent(c, a uint8) uint8 {
 	if a == 0 || c == 0 {
 		return 0
@@ -377,21 +384,18 @@ func (ai *ANSImage) RenderExt(renderGoCode, disableBgColor bool) string {
 	// in the batch.
 	if ai.dithering == NoDithering {
 		nRows := ai.h / 2
+		if ai.maxprocs == 1 {
+			return ai.renderNoDitheringSerial(nRows, renderGoCode, disableBgColor, backslash033, backslashN)
+		}
+
 		rows := make([]string, nRows)
 		for batch := 0; batch < nRows; batch += ai.maxprocs {
 			ch := make(chan renderData, ai.maxprocs)
 			for n, r := 0, batch; (n < ai.maxprocs) && (r < nRows); n, r = n+1, batch+n+1 {
 				go func(r int) {
-					py := 2 * r
-					upperRow := py * ai.w
-					lowerRow := (py + 1) * ai.w
 					var builder strings.Builder
 					builder.Grow(ai.w*48 + 16)
-					for x := 0; x < ai.w; x++ {
-						writeANSIPixelData(&builder, ai.pixmap[upperRow+x], ai, true, backslash033, disableBgColor)  // upper pixel
-						writeANSIPixelData(&builder, ai.pixmap[lowerRow+x], ai, false, backslash033, disableBgColor) // lower pixel
-					}
-					writeReset(&builder, backslash033, backslashN) // reset ansi style
+					ai.writeNoDitheringRow(&builder, r, backslash033, backslashN, disableBgColor)
 					ch <- renderData{row: r, render: builder.String()}
 				}(r)
 			}
@@ -408,18 +412,18 @@ func (ai *ANSImage) RenderExt(renderGoCode, disableBgColor bool) string {
 
 	// WITH DITHERING
 	// One output row per pixmap row; outer loop iterates over batches of ai.maxprocs rows.
+	if ai.maxprocs == 1 {
+		return ai.renderDitheringSerial(renderGoCode, disableBgColor, backslash033, backslashN)
+	}
+
 	rows := make([]string, ai.h)
 	for batch := 0; batch < ai.h; batch += ai.maxprocs {
 		ch := make(chan renderData, ai.maxprocs)
 		for n, r := 0, batch; (n < ai.maxprocs) && (r < ai.h); n, r = n+1, batch+n+1 {
 			go func(r int) {
-				row := r * ai.w
 				var builder strings.Builder
 				builder.Grow(ai.w*48 + 16)
-				for x := 0; x < ai.w; x++ {
-					writeANSIPixelData(&builder, ai.pixmap[row+x], ai, false, backslash033, disableBgColor)
-				}
-				writeReset(&builder, backslash033, backslashN) // reset ansi style
+				ai.writeDitheringRow(&builder, r, backslash033, backslashN, disableBgColor)
 				ch <- renderData{row: r, render: builder.String()}
 			}(r)
 		}
@@ -432,6 +436,55 @@ func (ai *ANSImage) RenderExt(renderGoCode, disableBgColor bool) string {
 		}
 	}
 	return strings.Join(rows, "")
+}
+
+func (ai *ANSImage) renderNoDitheringSerial(nRows int, renderGoCode, disableBgColor bool, backslash033, backslashN string) string {
+	var builder strings.Builder
+	builder.Grow(nRows * (ai.w*48 + 24))
+	for r := 0; r < nRows; r++ {
+		if renderGoCode {
+			writeGoPrintStart(&builder)
+		}
+		ai.writeNoDitheringRow(&builder, r, backslash033, backslashN, disableBgColor)
+		if renderGoCode {
+			writeGoPrintEnd(&builder)
+		}
+	}
+	return builder.String()
+}
+
+func (ai *ANSImage) renderDitheringSerial(renderGoCode, disableBgColor bool, backslash033, backslashN string) string {
+	var builder strings.Builder
+	builder.Grow(ai.h * (ai.w*48 + 24))
+	for r := 0; r < ai.h; r++ {
+		if renderGoCode {
+			writeGoPrintStart(&builder)
+		}
+		ai.writeDitheringRow(&builder, r, backslash033, backslashN, disableBgColor)
+		if renderGoCode {
+			writeGoPrintEnd(&builder)
+		}
+	}
+	return builder.String()
+}
+
+func (ai *ANSImage) writeNoDitheringRow(builder *strings.Builder, r int, backslash033, backslashN string, disableBgColor bool) {
+	py := 2 * r
+	upperRow := py * ai.w
+	lowerRow := (py + 1) * ai.w
+	for x := 0; x < ai.w; x++ {
+		writeANSIPixelData(builder, ai.pixmap[upperRow+x], ai, true, backslash033, disableBgColor)  // upper pixel
+		writeANSIPixelData(builder, ai.pixmap[lowerRow+x], ai, false, backslash033, disableBgColor) // lower pixel
+	}
+	writeReset(builder, backslash033, backslashN) // reset ansi style
+}
+
+func (ai *ANSImage) writeDitheringRow(builder *strings.Builder, r int, backslash033, backslashN string, disableBgColor bool) {
+	row := r * ai.w
+	for x := 0; x < ai.w; x++ {
+		writeANSIPixelData(builder, ai.pixmap[row+x], ai, false, backslash033, disableBgColor)
+	}
+	writeReset(builder, backslash033, backslashN) // reset ansi style
 }
 
 // Draw writes the ANSImage to standard output (terminal).
