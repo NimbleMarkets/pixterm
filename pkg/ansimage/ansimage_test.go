@@ -622,19 +622,33 @@ func TestRenderExt_MaxProcsDeterministic(t *testing.T) {
 		{"DitheringWithBlocks", DitheringWithBlocks, 48, 24},
 		{"DitheringWithChars", DitheringWithChars, 48, 24},
 	}
+	options := []struct {
+		name           string
+		renderGoCode   bool
+		disableBgColor bool
+	}{
+		{"ANSI", false, false},
+		{"GoCode", true, false},
+		{"NoBg", false, true},
+		{"GoCodeNoBg", true, true},
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a, err := NewFromImage(gradientRGBA(tt.w, tt.h), color.Transparent, tt.dm)
 			if err != nil {
 				t.Fatalf("NewFromImage: %v", err)
 			}
-			a.SetMaxProcs(1)
-			want := a.RenderExt(false, false)
-			for _, maxprocs := range []int{2, 3, 4, 7, 16} {
-				a.SetMaxProcs(maxprocs)
-				if got := a.RenderExt(false, false); got != want {
-					t.Fatalf("RenderExt maxprocs=%d differed from maxprocs=1", maxprocs)
-				}
+			for _, opt := range options {
+				t.Run(opt.name, func(t *testing.T) {
+					a.SetMaxProcs(1)
+					want := a.RenderExt(opt.renderGoCode, opt.disableBgColor)
+					for _, maxprocs := range []int{2, 3, 4, 7, 16} {
+						a.SetMaxProcs(maxprocs)
+						if got := a.RenderExt(opt.renderGoCode, opt.disableBgColor); got != want {
+							t.Fatalf("RenderExt maxprocs=%d differed from maxprocs=1", maxprocs)
+						}
+					}
+				})
 			}
 		})
 	}
