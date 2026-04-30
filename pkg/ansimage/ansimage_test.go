@@ -636,10 +636,10 @@ func TestNewFromImage_DitheringAveragesBlocks(t *testing.T) {
 	if a.h != 2 || a.w != 2 {
 		t.Fatalf("dimensions: got %dx%d, want 2x2", a.h, a.w)
 	}
-	requirePixel(t, a, 0, 0, wantANSIPixel{r: 100, brightness: 100})
-	requirePixel(t, a, 0, 1, wantANSIPixel{r: 10, g: 20, b: 30, brightness: 30})
-	requirePixel(t, a, 1, 0, wantANSIPixel{r: 40, g: 90, b: 70, brightness: 90})
-	requirePixel(t, a, 1, 1, wantANSIPixel{r: 255, g: 128, brightness: 255})
+	requirePixel(t, a, 0, 0, wantANSIPixel{r: 100, brightness: 30})
+	requirePixel(t, a, 0, 1, wantANSIPixel{r: 10, g: 20, b: 30, brightness: 18})
+	requirePixel(t, a, 1, 0, wantANSIPixel{r: 40, g: 90, b: 70, brightness: 72})
+	requirePixel(t, a, 1, 1, wantANSIPixel{r: 255, g: 128, brightness: 151})
 }
 
 func TestNewFromImage_DitheringTransparentPixelsContributeZero(t *testing.T) {
@@ -660,7 +660,7 @@ func TestNewFromImage_DitheringTransparentPixelsContributeZero(t *testing.T) {
 	}
 	for y := 0; y < a.h; y++ {
 		for x := 0; x < a.w; x++ {
-			requirePixel(t, a, y, x, wantANSIPixel{r: 5, g: 10, b: 15, brightness: 15})
+			requirePixel(t, a, y, x, wantANSIPixel{r: 5, g: 10, b: 15, brightness: 9})
 		}
 	}
 }

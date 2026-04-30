@@ -266,14 +266,11 @@ func rgbaComponent(c, a uint8) uint8 {
 	return uint8(v)
 }
 
-func maxRGB(r, g, b uint8) uint8 {
-	if g > r {
-		r = g
-	}
-	if b > r {
-		r = b
-	}
-	return r
+// luminance calculates perceptual brightness using ITU-R BT.601 luma coefficients.
+// These constants reflect the human eye's higher sensitivity to green and lower
+// sensitivity to blue.
+func luminance(r, g, b uint8) uint8 {
+	return uint8((299*uint32(r) + 587*uint32(g) + 114*uint32(b)) / 1000)
 }
 
 // Height gets total rows of ANSImage.
@@ -581,17 +578,19 @@ func NewFromImage(image image.Image, bg color.Color, dm DitheringMode) (*ANSImag
 	return createANSImage(image, bg, dm)
 }
 
+var defaultFilter = imaging.Box
+
 // NewScaledFromImage creates a new scaled ANSImage from an image.Image.
 // Background color is used to fill when image has transparency or dithering mode is enabled.
 // Dithering mode is used to specify the way that ANSImage render ANSI-pixels (char/block elements).
 func NewScaledFromImage(image image.Image, y, x int, bg color.Color, sm ScaleMode, dm DitheringMode) (*ANSImage, error) {
 	switch sm {
 	case ScaleModeResize:
-		image = imaging.Resize(image, x, y, imaging.Lanczos)
+		image = imaging.Resize(image, x, y, defaultFilter)
 	case ScaleModeFill:
-		image = imaging.Fill(image, x, y, imaging.Center, imaging.Lanczos)
+		image = imaging.Fill(image, x, y, imaging.Center, defaultFilter)
 	case ScaleModeFit:
-		image = imaging.Fit(image, x, y, imaging.Lanczos)
+		image = imaging.Fit(image, x, y, defaultFilter)
 	default:
 		panic(errUnknownScaleMode)
 	}
@@ -622,11 +621,11 @@ func NewScaledFromReader(reader io.Reader, y, x int, bg color.Color, sm ScaleMod
 
 	switch sm {
 	case ScaleModeResize:
-		image = imaging.Resize(image, x, y, imaging.Lanczos)
+		image = imaging.Resize(image, x, y, defaultFilter)
 	case ScaleModeFill:
-		image = imaging.Fill(image, x, y, imaging.Center, imaging.Lanczos)
+		image = imaging.Fill(image, x, y, imaging.Center, defaultFilter)
 	case ScaleModeFit:
-		image = imaging.Fit(image, x, y, imaging.Lanczos)
+		image = imaging.Fit(image, x, y, defaultFilter)
 	default:
 		panic(errUnknownScaleMode)
 	}
@@ -785,7 +784,7 @@ func createANSImage(img image.Image, bg color.Color, dm DitheringMode) (*ANSImag
 						sumR += uint32(r)
 						sumG += uint32(g)
 						sumB += uint32(b)
-						sumBri += uint32(maxRGB(r, g, b))
+						sumBri += uint32(luminance(r, g, b))
 					}
 				}
 
