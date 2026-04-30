@@ -732,8 +732,8 @@ func createANSImage(img image.Image, bg color.Color, dm DitheringMode) (*ANSImag
 	w := xMax - xMin
 
 	if dm == NoDithering {
-		// always sets an even number of ANSIPixel rows...
-		h = h - h%2 // one for upper pixel and another for lower pixel --> without dithering
+		// round up to even number of rows to avoid truncation
+		h = (h + 1) & ^1
 	} else {
 		h = h / BlockSizeY // always sets 1 ANSIPixel block...
 		w = w / BlockSizeX // per 8x4 real pixels --> with dithering
@@ -746,15 +746,26 @@ func createANSImage(img image.Image, bg color.Color, dm DitheringMode) (*ANSImag
 
 	if dm == NoDithering {
 		for y := 0; y < h; y++ {
-			srcOffset := rgbaOut.PixOffset(xMin, yMin+y)
 			dstOffset := y * w
-			for x := 0; x < w; x++ {
-				ansimage.pixmap[dstOffset+x] = ansiPixelData{
-					R: rgbaOut.Pix[srcOffset],
-					G: rgbaOut.Pix[srcOffset+1],
-					B: rgbaOut.Pix[srcOffset+2],
+			if yMin+y < yMax {
+				srcOffset := rgbaOut.PixOffset(xMin, yMin+y)
+				for x := 0; x < w; x++ {
+					ansimage.pixmap[dstOffset+x] = ansiPixelData{
+						R: rgbaOut.Pix[srcOffset],
+						G: rgbaOut.Pix[srcOffset+1],
+						B: rgbaOut.Pix[srcOffset+2],
+					}
+					srcOffset += 4
 				}
-				srcOffset += 4
+			} else {
+				// Pad with background color
+				for x := 0; x < w; x++ {
+					ansimage.pixmap[dstOffset+x] = ansiPixelData{
+						R: ansimage.bgR,
+						G: ansimage.bgG,
+						B: ansimage.bgB,
+					}
+				}
 			}
 		}
 	} else {

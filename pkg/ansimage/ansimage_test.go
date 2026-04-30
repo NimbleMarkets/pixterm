@@ -563,7 +563,7 @@ func TestNewFromImage_SubImage_NonRGBA(t *testing.T) {
 	}
 }
 
-func TestNewFromImage_NoDithering_OddHeightTruncatesLastRow(t *testing.T) {
+func TestNewFromImage_NoDithering_OddHeightPadsLastRow(t *testing.T) {
 	src := image.NewRGBA(image.Rect(0, 0, 3, 3))
 	rowColors := []color.RGBA{
 		{R: 10, G: 20, B: 30, A: 255},
@@ -576,16 +576,20 @@ func TestNewFromImage_NoDithering_OddHeightTruncatesLastRow(t *testing.T) {
 		}
 	}
 
-	a, err := NewFromImage(src, color.Transparent, NoDithering)
+	// Use a specific background color to verify padding
+	bgColor := color.RGBA{R: 5, G: 5, B: 5, A: 255}
+	a, err := NewFromImage(src, bgColor, NoDithering)
 	if err != nil {
 		t.Fatalf("NewFromImage: %v", err)
 	}
-	if a.h != 2 || a.w != 3 {
-		t.Fatalf("dimensions: got %dx%d, want 2x3", a.h, a.w)
+	if a.h != 4 || a.w != 3 {
+		t.Fatalf("dimensions: got %dx%d, want 4x3", a.h, a.w)
 	}
 	for x := 0; x < a.w; x++ {
 		requirePixel(t, a, 0, x, wantANSIPixel{r: 10, g: 20, b: 30})
 		requirePixel(t, a, 1, x, wantANSIPixel{r: 40, g: 50, b: 60})
+		requirePixel(t, a, 2, x, wantANSIPixel{r: 70, g: 80, b: 90})
+		requirePixel(t, a, 3, x, wantANSIPixel{r: 5, g: 5, b: 5})
 	}
 }
 
