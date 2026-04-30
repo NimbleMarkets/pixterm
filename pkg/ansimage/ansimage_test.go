@@ -180,7 +180,7 @@ func TestSetAtGetAtBoundsAndCopy(t *testing.T) {
 	}
 }
 
-func TestWriteUint8(t *testing.T) {
+func TestAppendUint8(t *testing.T) {
 	tests := []struct {
 		value uint8
 		want  string
@@ -198,10 +198,9 @@ func TestWriteUint8(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.want, func(t *testing.T) {
-			var builder strings.Builder
-			writeUint8(&builder, tt.value)
-			if got := builder.String(); got != tt.want {
-				t.Fatalf("writeUint8(%d) = %q, want %q", tt.value, got, tt.want)
+			got := string(appendUint8(nil, tt.value))
+			if got != tt.want {
+				t.Fatalf("appendUint8(%d) = %q, want %q", tt.value, got, tt.want)
 			}
 		})
 	}
