@@ -577,17 +577,19 @@ func NewFromImage(image image.Image, bg color.Color, dm DitheringMode) (*ANSImag
 	return createANSImage(image, bg, dm)
 }
 
+var defaultFilter = imaging.Box
+
 // NewScaledFromImage creates a new scaled ANSImage from an image.Image.
 // Background color is used to fill when image has transparency or dithering mode is enabled.
 // Dithering mode is used to specify the way that ANSImage render ANSI-pixels (char/block elements).
 func NewScaledFromImage(image image.Image, y, x int, bg color.Color, sm ScaleMode, dm DitheringMode) (*ANSImage, error) {
 	switch sm {
 	case ScaleModeResize:
-		image = imaging.Resize(image, x, y, imaging.Lanczos)
+		image = imaging.Resize(image, x, y, defaultFilter)
 	case ScaleModeFill:
-		image = imaging.Fill(image, x, y, imaging.Center, imaging.Lanczos)
+		image = imaging.Fill(image, x, y, imaging.Center, defaultFilter)
 	case ScaleModeFit:
-		image = imaging.Fit(image, x, y, imaging.Lanczos)
+		image = imaging.Fit(image, x, y, defaultFilter)
 	default:
 		panic(errUnknownScaleMode)
 	}
@@ -618,11 +620,11 @@ func NewScaledFromReader(reader io.Reader, y, x int, bg color.Color, sm ScaleMod
 
 	switch sm {
 	case ScaleModeResize:
-		image = imaging.Resize(image, x, y, imaging.Lanczos)
+		image = imaging.Resize(image, x, y, defaultFilter)
 	case ScaleModeFill:
-		image = imaging.Fill(image, x, y, imaging.Center, imaging.Lanczos)
+		image = imaging.Fill(image, x, y, imaging.Center, defaultFilter)
 	case ScaleModeFit:
-		image = imaging.Fit(image, x, y, imaging.Lanczos)
+		image = imaging.Fit(image, x, y, defaultFilter)
 	default:
 		panic(errUnknownScaleMode)
 	}
