@@ -266,14 +266,11 @@ func rgbaComponent(c, a uint8) uint8 {
 	return uint8(v)
 }
 
-func maxRGB(r, g, b uint8) uint8 {
-	if g > r {
-		r = g
-	}
-	if b > r {
-		r = b
-	}
-	return r
+// luminance calculates perceptual brightness using ITU-R BT.601 luma coefficients.
+// These constants reflect the human eye's higher sensitivity to green and lower
+// sensitivity to blue.
+func luminance(r, g, b uint8) uint8 {
+	return uint8((299*uint32(r) + 587*uint32(g) + 114*uint32(b)) / 1000)
 }
 
 // Height gets total rows of ANSImage.
@@ -784,7 +781,7 @@ func createANSImage(img image.Image, bg color.Color, dm DitheringMode) (*ANSImag
 						sumR += uint32(r)
 						sumG += uint32(g)
 						sumB += uint32(b)
-						sumBri += uint32(maxRGB(r, g, b))
+						sumBri += uint32(luminance(r, g, b))
 					}
 				}
 
